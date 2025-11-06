@@ -31,8 +31,6 @@
 #include "midi_Namespace.h"
 #include "EZ_USB_MIDI_HOST_namespace.h"
 
-#include "usb_midi_host.h"
-
 BEGIN_EZ_USB_MIDI_HOST_NAMESPACE
 /// @brief This class models a MIDI IN and MIDI OUT virtual
 /// cable pair of a connected USB MIDI device. It implements
@@ -44,6 +42,7 @@ class EZ_USB_MIDI_HOST_Transport {
 public:
   EZ_USB_MIDI_HOST_Transport()  :
     devAddr(0), //not connected
+    idx(0xFF), // TinyUSB interface index not assigned
     cableNum(no_cable), // cable number not assigned
     hasMIDI_IN(false), // so doesn't have MIDI IN
     hasMIDI_OUT(false), // or MIDI out
@@ -59,6 +58,9 @@ public:
   /// or 0 if no device is connected
   uint8_t getDevAddr() { return devAddr; }
   
+  /// Return the TinyUSB interface index, or 0xFF if not connected
+  uint8_t getIdx() { return idx; }
+  
   /// Return true if this stream supports MIDI IN
   bool hasInCable() { return hasMIDI_IN; }
 
@@ -66,8 +68,9 @@ public:
   bool hasOutCable() { return hasMIDI_OUT; }
 
   /// configure stream for MIDI communication
-  void setConfiguration(uint8_t devAddr_, uint8_t cableNum_, bool hasMIDI_IN_, bool hasMIDI_OUT_) {
+  void setConfiguration(uint8_t devAddr_, uint8_t idx_, uint8_t cableNum_, bool hasMIDI_IN_, bool hasMIDI_OUT_) {
     devAddr = devAddr_;
+    idx = idx_;
     cableNum = cableNum_;
     hasMIDI_IN = hasMIDI_IN_;
     hasMIDI_OUT = hasMIDI_OUT_;
@@ -78,7 +81,7 @@ public:
 
   void begin() { tu_fifo_clear(&inFIFO); }
 
-  void end() { setConfiguration(0, no_cable, false, false); }
+  void end() { setConfiguration(0, 0xFF, no_cable, false, false); }
 
   /// Return the number of bytes available to read from the inFIFO.
   /// Always return 0 if the transport has no MIDI IN
@@ -106,7 +109,11 @@ public:
   bool inUnderflow() { return inFIFOunderflow; }
 
   /// write the byte to the MIDI stream. No error is reported if something goes wrong
-  void write(uint8_t byteToWrite) { outFIFOoverflow = (1 != tuh_midi_stream_write(devAddr, cableNum, &byteToWrite, 1)); }
+  void write(uint8_t byteToWrite) { 
+    if (idx != 0xFF) {
+      outFIFOoverflow = (1 != tuh_midi_stream_write(idx, cableNum, &byteToWrite, 1)); 
+    }
+  }
 
   /// return true if the last call to write() caused the MIDI OUT FIFO to overflow
   /// Applications should wait for the for this function to return
@@ -116,7 +123,14 @@ public:
   /// Signal start of transmission to the transport; return false if
   /// if there is no MIDI OUT in the transport, if there is no connected device,
   /// or if the OUT FIFO is full so subsequent calls to write() will fail
-  bool beginTransmission(uint8_t) { return devAddr != 0 && hasMIDI_OUT && tuh_midi_can_write_stream(devAddr); }
+  bool beginTransmission(uint8_t) { 
+    // Check if we have a valid connection and MIDI OUT capability
+    if (idx == 0xFF || !hasMIDI_OUT) return false;
+    
+    // The built-in TinyUSB MIDI host doesn't have a direct equivalent to tuh_midi_can_write_stream
+    // We can check if the interface is mounted as a proxy
+    return tuh_midi_mounted(idx);
+  }
 
   /// signal end of transmission to the transport; nothing to do
   void endTransmission() {  }
@@ -136,6 +150,7 @@ public:
 private:
   static uint8_t const no_cable = 16;  //!< legal MIDI cable numbers are 0-15
   uint8_t devAddr;
+  uint8_t idx; // TinyUSB interface index
   uint8_t cableNum;
   bool hasMIDI_IN;
   bool hasMIDI_OUT;

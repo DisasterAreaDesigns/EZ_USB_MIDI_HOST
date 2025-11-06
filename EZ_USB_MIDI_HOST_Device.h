@@ -37,10 +37,10 @@ BEGIN_EZ_USB_MIDI_HOST_NAMESPACE
 template<class settings>
 class EZ_USB_MIDI_HOST_Device {
 public:
-  EZ_USB_MIDI_HOST_Device() : devAddr{0}, nInCables{0}, nOutCables{0}, vid{0}, pid{0}, onMidiInWriteFail{nullptr} {
+  EZ_USB_MIDI_HOST_Device() : devAddr{0}, idx{0xFF}, nInCables{0}, nOutCables{0}, vid{0}, pid{0}, onMidiInWriteFail{nullptr} {
     clearTransports();
-    for (unsigned idx=0;idx < settings::MaxCables; idx++) {
-        interfaces[idx] = new MIDI_NAMESPACE::MidiInterface<EZ_USB_MIDI_HOST_Transport<settings>, settings>(transports[idx]);
+    for (unsigned idx_=0;idx_ < settings::MaxCables; idx_++) {
+        interfaces[idx_] = new MIDI_NAMESPACE::MidiInterface<EZ_USB_MIDI_HOST_Transport<settings>, settings>(transports[idx_]);
     }
     productStr[0] = 0;
     manufacturerStr[0] = 0;
@@ -48,8 +48,8 @@ public:
   }
 
   ~EZ_USB_MIDI_HOST_Device() {
-    for (unsigned idx=0;idx < settings::MaxCables; idx++) {
-        delete interfaces[idx];
+    for (unsigned idx_=0;idx_ < settings::MaxCables; idx_++) {
+        delete interfaces[idx_];
     }
   }
 
@@ -175,18 +175,20 @@ public:
   /// @brief Call this function to configure the MIDI interface objects
   /// associated with the device's virtual MIDI cables
   /// @param devAddr_ the connected device's address
+  /// @param idx_ the TinyUSB interface index for this device
   /// @param nInCables_ the number of virtual MIDI IN cables the device supports
   /// @param nOutCables_ the number of virtual MIDI OUT cables the device supports
-  void onConnect(uint8_t devAddr_, uint8_t nInCables_, uint8_t nOutCables_) {
+  void onConnect(uint8_t devAddr_, uint8_t idx_, uint8_t nInCables_, uint8_t nOutCables_) {
     if (devAddr_ > 0 && devAddr_ <= RPPICOMIDI_TUH_MIDI_MAX_DEV) {
         devAddr = devAddr_;
+        idx = idx_;
         nInCables = nInCables_;
         nOutCables = nOutCables_;
         clearTransports(); // make sure all transports are initialized
         uint8_t maxCables = nInCables > nOutCables ? nInCables : nOutCables;
-        for (uint8_t idx = 0; idx < maxCables; idx++) {
-            transports[idx].setConfiguration(devAddr, idx, idx < nInCables, idx < nOutCables);
-            interfaces[idx]->begin(MIDI_CHANNEL_OMNI);
+        for (uint8_t cable_idx = 0; cable_idx < maxCables; cable_idx++) {
+            transports[cable_idx].setConfiguration(devAddr, idx, cable_idx, cable_idx < nInCables, cable_idx < nOutCables);
+            interfaces[cable_idx]->begin(MIDI_CHANNEL_OMNI);
         }
         tuh_vid_pid_get(devAddr, &vid, &pid);
 
@@ -233,6 +235,10 @@ public:
   /// @return the device address for this device object
   uint8_t getDevAddr() { return devAddr; }
 
+  /// @brief  
+  /// @return the TinyUSB interface index for this device object
+  uint8_t getIdx() { return idx; }
+
   /// @brief 
   /// @return the number of virtual MIDI IN cables for this device object 
   uint8_t getNumInCables() { return nInCables; }
@@ -271,8 +277,8 @@ public:
   /// if the host bus is ready to do it. Does nothing if
   /// there is nothing to send or if the host bus is busy
   void writeFlush() {
-    if (devAddr != 0)
-        tuh_midi_stream_flush(devAddr);
+    if (idx != 0xFF)
+        tuh_midi_write_flush(idx);
   }
 
   /// @brief
@@ -298,11 +304,12 @@ public:
   const uint8_t* getSerialString() {return serialStr; }
 private:
   void clearTransports() {
-    for (uint8_t idx = 0; idx < settings::MaxCables; idx++) {
-        transports[idx].end();
+    for (uint8_t idx_ = 0; idx_ < settings::MaxCables; idx_++) {
+        transports[idx_].end();
     }
   }
   uint8_t devAddr;
+  uint8_t idx; // TinyUSB interface index
   uint8_t nInCables;
   uint8_t nOutCables;
   uint16_t vid;

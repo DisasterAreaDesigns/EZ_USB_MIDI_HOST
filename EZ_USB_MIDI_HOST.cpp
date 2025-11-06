@@ -1,8 +1,7 @@
-/**
- *
+/*
  * The MIT License (MIT)
  *
- * Copyright (c) 2023 rppicomidi
+ * Copyright (c) 2025 rppicomidi, DisasterAreaDesigns
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,53 +22,12 @@
  * THE SOFTWARE.
  */
 
-/**
- * @file EZ_USB_MIDI_HOST.cpp
- * This file contains the C callback functions for the usb_midi_host library.
- * These callbacks have to be defined here because the Arduino IDE will not
- * link these functions to the usb_midi_host library if they are defined in
- * the sketch directory. This adds a single function call overhead to the
- * callbacks over using the raw usb_midi_host library.
- */
-#include <cstdint>
+#include "EZ_USB_MIDI_HOST.h"
 
-static void* inst_ptr = nullptr; //!< a pointer to the instance of the EZ_USB_MIDI_HOST class that the application created
-/* The following are pointers to the callback functions implemented in the EZ_USB_MIDI_HOST class */
-static void (*mount_cb_fp)(uint8_t devAddr, uint8_t nInCables, uint16_t nOutCables, void* inst)=nullptr;
-static void (*umount_cb_fp)(uint8_t devAddr, void* inst)=nullptr;
-static void (*rx_cb_fp)(uint8_t devAddr, uint32_t numPackets, void* inst)=nullptr;
-
-/**
- * @brief Initialize the pointers to the callback functions. The EZ_USB_MIDI_HOST
- * class constructor should call this. Applications probably should not.
- */
-extern "C" void rppicomidi_ez_usb_midi_host_set_cbs(void (*mount_cb)(uint8_t devAddr, uint8_t nInCables, uint16_t nOutCables, void*),
-					 void (*umount_cb)(uint8_t devAddr, void*), void (*rx_cb)(uint8_t devAddr, uint32_t numPackets, void*),
-					 void* inst)
-{
-  mount_cb_fp = mount_cb;
-  umount_cb_fp = umount_cb;
-  rx_cb_fp = rx_cb;
-  inst_ptr = inst;
-}
-
-/* The following functions override the weak functions declared in the usb_midi_host library */
-
-extern "C" void tuh_midi_mount_cb(uint8_t devAddr, uint8_t inEP, uint8_t outEP, uint8_t nInCables, uint16_t nOutCables)
-{
-  (void)inEP;
-  (void)outEP;
-  mount_cb_fp(devAddr, nInCables, nOutCables, inst_ptr); 
-}
-
-extern "C" void tuh_midi_umount_cb(uint8_t devAddr, uint8_t unused)
-{
-  (void)unused;
-  umount_cb_fp(devAddr, inst_ptr);
-}
-
-extern "C" void tuh_midi_rx_cb(uint8_t devAddr, uint32_t numPackets)
-{
-  rx_cb_fp(devAddr, numPackets, inst_ptr);
-}
-
+// This file intentionally left mostly empty.
+// The TinyUSB callbacks (tuh_midi_mount_cb, tuh_midi_umount_cb, tuh_midi_rx_cb)
+// are defined by the RPPICOMIDI_EZ_USB_MIDI_HOST_INSTANCE macro in the user's sketch.
+// 
+// Previous versions of this library defined these callbacks here, but with the
+// migration to built-in TinyUSB MIDI host, they must be defined in the sketch
+// to properly link to the specific instance created by the macro.

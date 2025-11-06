@@ -1,7 +1,6 @@
 /*
  * @file EZ_USB_MIDI_HOST.h
- * @brief Arduino MIDI Library compatible wrapper for usb_midi_host
- *        application driver
+ * @brief Arduino MIDI Library compatible wrapper for TinyUSB built-in MIDI host
  *
  * This library manages all USB MIDI devices connected to the
  * single USB Root hub for TinyUSB for the whole plug in,
@@ -47,9 +46,6 @@
 
 #pragma once
 
-extern "C" void rppicomidi_ez_usb_midi_host_set_cbs(void (*mount_cb)(uint8_t devAddr, uint8_t nInCables, uint16_t nOutCables, void*),
-					 void (*umount_cb)(uint8_t devAddr, void*), void (*rx_cb)(uint8_t devAddr, uint32_t numPackets, void*), void*);
-
 #include "EZ_USB_MIDI_HOST_Config.h"
 
 #include "EZ_USB_MIDI_HOST_Device.h"
@@ -73,9 +69,10 @@ template<class settings>
 class EZ_USB_MIDI_HOST {
 public:
   EZ_USB_MIDI_HOST() : appOnConnect{nullptr}, appOnDisconnect{nullptr} {
-        rppicomidi_ez_usb_midi_host_set_cbs(onConnect, onDisconnect, onRx, reinterpret_cast<void*>(this));
-        for (uint8_t idx = 0; idx < CFG_TUH_DEVICE_MAX; idx++)
+        for (uint8_t idx = 0; idx < CFG_TUH_DEVICE_MAX; idx++) {
           devAddr2DeviceMap[idx] = nullptr;
+          idx2devAddr[idx] = 0;
+        }
     }
   ~EZ_USB_MIDI_HOST() = default;
   EZ_USB_MIDI_HOST(EZ_USB_MIDI_HOST const &) = delete;
@@ -85,14 +82,16 @@ public:
   void begin(Adafruit_USBH_Host* usbHost, uint8_t rhPort, ConnectCallback cfptr, DisconnectCallback dfptr) {
     setAppOnConnect(cfptr);
     setAppOnDisconnect(dfptr);
-    tuh_midih_define_limits(settings::MidiRxBufsize, settings::MidiTxBufsize, settings::MaxCables);
+    // Note: tuh_midih_define_limits() does not exist in built-in TinyUSB MIDI host
+    // Buffer sizes are configured via CFG_TUH_MIDI_RX_BUFSIZE and CFG_TUH_MIDI_TX_BUFSIZE
     usbHost->begin(rhPort);
   }
 #else
   void begin(uint8_t rhPort, ConnectCallback cfptr, DisconnectCallback dfptr) {
     setAppOnConnect(cfptr);
     setAppOnDisconnect(dfptr);
-    tuh_midih_define_limits(settings::MidiRxBufsize, settings::MidiTxBufsize, settings::MaxCables);
+    // Note: tuh_midih_define_limits() does not exist in built-in TinyUSB MIDI host
+    // Buffer sizes are configured via CFG_TUH_MIDI_RX_BUFSIZE and CFG_TUH_MIDI_TX_BUFSIZE
     tuh_init(rhPort);
   }
 #endif
@@ -213,54 +212,74 @@ public:
     return nullptr;
   }
 
-  // The following 3 functions should only be used by the tuh_midi_*_cb()
-  // callback functions in file EZ_USB_MIDI_HOST.cpp.
-  // They are declared public because the tuh_midi_*cb() callbacks are not
-  // associated with any object and this class is accessed via the getInstance()
-  // function.
-  static void onConnect(uint8_t devAddr, uint8_t nInCables, uint16_t nOutCables, void* inst) {
-    auto me = reinterpret_cast<EZ_USB_MIDI_HOST<settings>*>(inst);
+  /// @brief Get the TinyUSB MIDI interface index from a device address
+  /// @param devAddr the USB device address
+  /// @return the interface index or 0xFF if not found
+  uint8_t getIdxFromDevAddr(uint8_t devAddr) {
+    if (devAddr == 0) return 0xFF;
+    for (uint8_t idx = 0; idx < CFG_TUH_DEVICE_MAX; idx++) {
+      if (idx2devAddr[idx] == devAddr) return idx;
+    }
+    return 0xFF;
+  }
+
+  // The following 3 functions are called by tuh_midi callbacks
+  void onConnect(uint8_t idx, const tuh_midi_mount_cb_t* mount_cb_data) {
+    uint8_t devAddr = mount_cb_data->daddr;
+    uint8_t nInCables = mount_cb_data->rx_cable_count;
+    uint8_t nOutCables = mount_cb_data->tx_cable_count;
+    
+    // Store the idx to devAddr mapping
+    idx2devAddr[idx] = devAddr;
+    
     // try to allocate a EZ_USB_MIDI_HOST_Device object for the connected device
-    uint8_t idx = 0;
-    for (; idx < RPPICOMIDI_TUH_MIDI_MAX_DEV && me->devAddr2DeviceMap[idx] != nullptr; idx++) {}
-    if (idx < RPPICOMIDI_TUH_MIDI_MAX_DEV && me->devAddr2DeviceMap[idx] == nullptr) {
-      me->devAddr2DeviceMap[idx] = me->devices + idx;
-      me->devAddr2DeviceMap[idx]->onConnect(devAddr, nInCables, nOutCables);
-      if (me->appOnConnect) me->appOnConnect(devAddr, nInCables, nOutCables);
+    uint8_t dev_idx = 0;
+    for (; dev_idx < RPPICOMIDI_TUH_MIDI_MAX_DEV && devAddr2DeviceMap[dev_idx] != nullptr; dev_idx++) {}
+    if (dev_idx < RPPICOMIDI_TUH_MIDI_MAX_DEV && devAddr2DeviceMap[dev_idx] == nullptr) {
+      devAddr2DeviceMap[dev_idx] = devices + dev_idx;
+      devAddr2DeviceMap[dev_idx]->onConnect(devAddr, idx, nInCables, nOutCables);
+      if (appOnConnect) appOnConnect(devAddr, nInCables, nOutCables);
     }
   }
-  static void onDisconnect(uint8_t devAddr, void* inst) {
-    auto me = reinterpret_cast<EZ_USB_MIDI_HOST<settings>*>(inst);
+  
+  void onDisconnect(uint8_t idx) {
+    uint8_t devAddr = idx2devAddr[idx];
+    if (devAddr == 0) return;
+    
+    // Clear the mapping
+    idx2devAddr[idx] = 0;
+    
     // find the EZ_USB_MIDI_HOST_Device object allocated for this device
-    auto ptr = me->getDevFromDevAddr(devAddr);
+    auto ptr = getDevFromDevAddr(devAddr);
     if (ptr != nullptr) {
-    ptr->onDisconnect(devAddr);
-    if (me->appOnDisconnect)
-      me->appOnDisconnect(devAddr);
-    uint8_t idx = 0;
-    for (; idx < RPPICOMIDI_TUH_MIDI_MAX_DEV && (me->devAddr2DeviceMap[idx] == nullptr || me->devAddr2DeviceMap[idx]->getDevAddr() != devAddr); idx++) {}
-      if (idx < RPPICOMIDI_TUH_MIDI_MAX_DEV && me->devAddr2DeviceMap[idx] != nullptr && me->devAddr2DeviceMap[idx]->getDevAddr() == devAddr) {
-        me->devAddr2DeviceMap[idx] = nullptr;
+      ptr->onDisconnect(devAddr);
+      if (appOnDisconnect)
+        appOnDisconnect(devAddr);
+      uint8_t dev_idx = 0;
+      for (; dev_idx < RPPICOMIDI_TUH_MIDI_MAX_DEV && (devAddr2DeviceMap[dev_idx] == nullptr || devAddr2DeviceMap[dev_idx]->getDevAddr() != devAddr); dev_idx++) {}
+      if (dev_idx < RPPICOMIDI_TUH_MIDI_MAX_DEV && devAddr2DeviceMap[dev_idx] != nullptr && devAddr2DeviceMap[dev_idx]->getDevAddr() == devAddr) {
+        devAddr2DeviceMap[dev_idx] = nullptr;
       }
     }
   }
-  static void onRx(uint8_t devAddr, uint32_t numPackets, void* inst) {
-    auto me = reinterpret_cast<EZ_USB_MIDI_HOST<settings>*>(inst);
-    if (numPackets != 0)
-    {
-      uint8_t cable;
-      uint8_t buffer[48];
-      while (1) {
-        uint16_t bytesRead = tuh_midi_stream_read(devAddr, &cable, buffer, sizeof(buffer));
-        if (bytesRead == 0)
-          return;
-        auto dev = me->getDevFromDevAddr(devAddr);
-        if (dev != nullptr) {
-          dev->writeToInFIFO(cable, buffer, bytesRead);
-        }
+  
+  void onRx(uint8_t idx, uint32_t numPackets) {
+    uint8_t devAddr = idx2devAddr[idx];
+    if (devAddr == 0 || numPackets == 0) return;
+    
+    uint8_t cable;
+    uint8_t buffer[48];
+    while (1) {
+      uint32_t bytesRead = tuh_midi_stream_read(idx, &cable, buffer, sizeof(buffer));
+      if (bytesRead == 0)
+        return;
+      auto dev = getDevFromDevAddr(devAddr);
+      if (dev != nullptr) {
+        dev->writeToInFIFO(cable, buffer, bytesRead);
       }
     }
   }
+
 private:
   EZ_USB_MIDI_HOST_Device<settings> devices[RPPICOMIDI_TUH_MIDI_MAX_DEV];
   ConnectCallback appOnConnect;
@@ -272,10 +291,28 @@ private:
   // has been connected or nullptr if not.
   // The problem this solves is RPPICOMIDI_TUH_MIDI_MAX_DEV < CFG_TUH_DEVICE_MAX
   EZ_USB_MIDI_HOST_Device<settings>* devAddr2DeviceMap[CFG_TUH_DEVICE_MAX];
+  
+  // Map TinyUSB interface index to device address
+  uint8_t idx2devAddr[CFG_TUH_DEVICE_MAX];
 };
 
 END_EZ_USB_MIDI_HOST_NAMESPACE
 
+// Macro to instantiate EZ_USB_MIDI_HOST and define required TinyUSB callbacks
+// Usage: RPPICOMIDI_EZ_USB_MIDI_HOST_INSTANCE(usbhMIDI, MidiHostSettingsDefault)
+// Note: The callbacks override TinyUSB's weak symbol implementations
 #define RPPICOMIDI_EZ_USB_MIDI_HOST_INSTANCE(name_, settings) \
-    static EZ_USB_MIDI_HOST<settings> name_;
+    EZ_USB_MIDI_HOST_NAMESPACE::EZ_USB_MIDI_HOST<settings> name_; \
+    void tuh_midi_mount_cb(uint8_t idx, const tuh_midi_mount_cb_t* mount_cb_data) { \
+      name_.onConnect(idx, mount_cb_data); \
+    } \
+    void tuh_midi_umount_cb(uint8_t idx) { \
+      name_.onDisconnect(idx); \
+    } \
+    void tuh_midi_rx_cb(uint8_t idx, uint32_t xferred_bytes) { \
+      name_.onRx(idx, xferred_bytes); \
+    }
+
+
+
 
