@@ -1,3 +1,5 @@
+WIP - updating the readme as I implement these changes
+
 # EZ_USB_MIDI_HOST
 This README file contains the design notes and limitations of the
 C++ library code that lets Arduino sketches and C/C++ programs
@@ -22,14 +24,11 @@ later. The previous versions used a different API.
 
 # Adding this library to your project
 ## C/C++ Programs
-First, you must install the [usb_midi_host](https://github.com/rppicomidi/usb_midi_host) library in your file
-system at the same directory level as this project. That is,
-if this library source is installed in directory `EZ_USB_MIDI_HOST`,
-then the directory of the usb_midi_host library must be
-`EZ_USB_MIDI_HOST/../usb_midi_host`. You must also make sure
-you have the pico-sdk installed correctly, that the TinyUSB library
+This updated version removes the dependency for the [usb_midi_host](https://github.com/rppicomidi/usb_midi_host) library. You must also make sure you have the pico-sdk installed correctly, that the TinyUSB library
 is up to date, and if your hardware requires it, the Pico_PIO_USB
-library is installed. See the Building C/C++ applications section
+library is installed. This has been tested with v0.5.3 of the Pico_PIO_USB library, later versions may have issues, see the info on its GitHub repo.
+
+See the Building C/C++ applications section
 of the usb_midi_host [README](https://github.com/rppicomidi/usb_midi_host/blob/main/README.md)
 for more information.
 Finally, you must install the [Arduino MIDI Library](https://github.com/FortySevenEffects/arduino_midi_library)
@@ -44,8 +43,7 @@ see the `EZ_USB_MIDI_HOST_PIO_example` for other details.
 
 ## Arduino
 First, use the Library Manager to install this library and install all of
-its dependencies (Adafruit TinyUSB Arduino Library, the Arduino MIDI Library,
-the usb_midi_host Library). Next, if your hardware requires it, install the
+its dependencies (Adafruit TinyUSB Arduino Library and the Arduino MIDI Library.  Next, if your hardware requires it, install the
 Pico_PIO_USB library.
 
 Adding `#include "EZ_USB_MIDI_HOST.h"` to your sketch should be sufficient
@@ -53,6 +51,8 @@ to integrate your Arduino sketch with this library and all of its dependencies.
 If you are using the Pico PIO USB Library to implement the host, you must
 also add `#include "pio_usb.h"` for `#include "EZ_USB_MIDI_HOST.h"`.
 See the `EZ_USB_MIDI_HOST_PIO_example` for other details.
+
+We have found that MIDI.h should be included before EZ_USB_MIDI_HOST to prevent errors during compilation.  If you are using TinyUSB for a dual-role device (for example USB MIDI and USB Host, or for debugging) it should be included *after* EZ_USB_MIDI_HOST.
 
 # EZ_USB_MIDI_HOST Library Design
 The Arduino MIDI Library has a Transport
@@ -72,14 +72,14 @@ following software components layered as follows:
 |              | EZ_USB_MIDI_HOST           |
 |              | EZ_USB_MIDI_HOST_Device    |
 | MIDI Library | EZ_USB_MIDI_HOST_Transport |
-| TinyUSB      | usb_midi_host_app_driver   |
+| TinyUSB      |   	|
 
 The application interacts with a single `EZ_USB_MIDI_HOST` object.
 The `EZ_USB_MIDI_HOST` object has as many `EZ_USB_MIDI_HOST_Device`
 objects as there are hub ports. Each device has a configurable
 number of `MIDI Library` bidirectional streams; each stream has
-a `EZ_USB_MIDI_HOST_Transport` interface. Each`EZ_USB_MIDI_HOST_Transport` object interacts with the
-`TinyUSB` library supplemented by the `usb_midi_host_app_driver`.
+a `EZ_USB_MIDI_HOST_Transport` interface. Each`EZ_USB_MIDI_HOST_Transport` object interacts directly with the
+`TinyUSB` library.
 
 # Writing Applications
 To create an instance of the EZ_USB_MIDI_HOST class for your
